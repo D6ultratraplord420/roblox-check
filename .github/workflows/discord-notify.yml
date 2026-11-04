@@ -25,17 +25,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout latest commit
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: Generate readable patch notes
+      - name: Generate and send patch notes
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
           AUTHOR: ${{ github.actor }}
           COMMIT: ${{ github.event.head_commit.message }}
           COMPARE_URL: ${{ github.event.compare }}
+
         run: |
           python3 <<'PY'
           import os
@@ -43,75 +44,80 @@ jobs:
           import json
           import subprocess
           import urllib.request
+          import urllib.error
 
-          def git(*args):
-              return subprocess.check_output(
-                  ["git", *args], text=True, stderr=subprocess.DEVNULL
-              )
-
-          webhook = os.environ["WEBHOOK"]
-          author = os.environ["AUTHOR"]
+          webhook = os.environ.get("WEBHOOK", "").strip()
+          author = os.environ.get("AUTHOR", "Unknown")
           commit = os.environ.get("COMMIT", "Code update")
           compare = os.environ.get("COMPARE_URL", "")
 
-          # Identify changed files
-          statuses = git(
-              "diff-tree", "--no-commit-id", "--name-status",
-              "-r", "HEAD"
+          if not webhook:
+              raise RuntimeError("DISCORD_WEBHOOK_URL secret is missing.")
+
+          if not webhook.startswith("https://discord.com/api/webhooks/") and not webhook.startswith("https://discordapp.com/api/webhooks/"):
+              raise RuntimeError("Webhook secret does not look like a valid Discord webhook URL.")
+
+          def git(*args):
+              return subprocess.check_output(
+                  ["git", *args],
+                  text=True,
+                  stderr=subprocess.DEVNULL
+              )
+
+          # Find changed files
+          raw_files = git(
+              "diff-tree", "--no-commit-id",
+              "--name-status", "-r", "HEAD"
           ).splitlines()
 
           files = []
-          for item in statuses:
+          for item in raw_files:
               parts = item.split("\t")
-              if len(parts) >= 2:
-                  status, filename = parts[0], parts[-1]
-                  label = {
-                      "A": "🟢 Added",
-                      "M": "🟡 Modified",
-                      "D": "🔴 Removed",
-                      "R": "🔵 Renamed"
-                  }.get(status[0], "📄 Changed")
-                  files.append(f"{label}: `{filename}`")
+              if len(parts) < 2:
+                  continue
 
-          # Get actual code changes, excluding Git metadata
-          diff = git("show", "--format=", "--no-ext-diff", "--unified=0", "HEAD")
+              status = parts[0][0]
+              filename = parts[-1]
+
+              labels = {
+                  "A": "🟢 Added",
+                  "M": "🟡 Modified",
+                  "D": "🔴 Removed",
+                  "R": "🔵 Renamed"
+              }
+
+              files.append(f"{labels.get(status, '📄 Changed')}: `{filename}`")
+
+          # Retrieve actual code changes
+          diff = git(
+              "show", "--format=", "--no-ext-diff",
+              "--unified=0", "HEAD"
+          )
 
           additions = []
           removals = []
 
           sensitive = re.compile(
-              r"(webhook|password|secret|token|api[_-]?key|"
-              r"authorization|private[_-]?key)",
+              r"webhook|password|secret|token|api[_-]?key|"
+              r"authorization|private[_-]?key",
               re.I
           )
 
           for line in diff.splitlines():
-              if line.startswith("+++") or line.startswith("---"):
+              if line.startswith(("+++", "---")):
                   continue
 
               if line.startswith("+"):
-                  content = line[1:].strip()
-                  if content and not sensitive.search(content):
-                      additions.append(content)
+                  value = line[1:].strip()
+                  if value and not sensitive.search(value):
+                      additions.append(value)
 
               elif line.startswith("-"):
-                  content = line[1:].strip()
-                  if content and not sensitive.search(content):
-                      removals.append(content)
+                  value = line[1:].strip()
+                  if value and not sensitive.search(value):
+                      removals.append(value)
 
-          def describe(line):
-              # Recognize version/build assignments
-              match = re.search(
-                  r"\$?([\w.]*build|[\w.]*version)\s*=\s*['\"]?([^'\" ]+)",
-                  line,
-                  re.I
-              )
-              if match:
-                  return f"Updated {match.group(1)} to `{match.group(2)}`"
-
-              # Make common code changes easier to read
-              if line.startswith("#"):
-                  return "Updated a script comment"
+          def summarize(line):
               if re.search(r"\bfunction\s+\w+", line, re.I):
                   return "Added or updated a function"
               if re.search(r"\b(if|elseif|else)\b", line, re.I):
@@ -119,56 +125,52 @@ jobs:
               if re.search(r"\b(try|catch|finally)\b", line, re.I):
                   return "Updated error handling"
               if re.search(r"\b(import|using|require)\b", line, re.I):
-                  return "Updated dependencies or imports"
+                  return "Updated imports or dependencies"
+              if re.search(r"\b(version|build)\w*\s*=", line, re.I):
+                  return f"Updated version/build setting: `{line[:100]}`"
               if "=" in line:
-                  return f"Updated setting: `{line[:90]}`"
-
-              return f"Changed code: `{line[:90]}`"
+                  return f"Updated setting: `{line[:100]}`"
+              return f"Changed code: `{line[:100]}`"
 
           changes = []
           seen = set()
 
           for line in additions:
-              description = "➕ " + describe(line)
-              if description not in seen:
-                  changes.append(description)
-                  seen.add(description)
+              item = "➕ " + summarize(line)
+              if item not in seen:
+                  changes.append(item)
+                  seen.add(item)
 
           for line in removals:
-              description = "➖ Removed: " + describe(line)
-              if description not in seen:
-                  changes.append(description)
-                  seen.add(description)
+              item = "➖ Removed: " + summarize(line)
+              if item not in seen:
+                  changes.append(item)
+                  seen.add(item)
 
           if not changes:
               changes = ["No readable code changes detected."]
 
-          # Discord embed limits
-          changes_text = "\n".join(changes[:10])
           if len(changes) > 10:
-              changes_text += f"\n…and {len(changes) - 10} more changes."
+              changes = changes[:10] + [
+                  f"…and {len(changes) - 10} more changes."
+              ]
 
-          files_text = "\n".join(files[:15]) if files else "No file details available."
-          if len(files) > 15:
-              files_text += f"\n…and {len(files) - 15} more files."
+          files_text = "\n".join(files[:15]) or "No file details available."
+          changes_text = "\n".join(changes)
 
           message = commit.lower()
+
           if any(word in message for word in ["fix", "bug"]):
-              kind = "🐛 BUG FIX"
-              color = 15158332
+              kind, color = "🐛 BUG FIX", 15158332
           elif any(word in message for word in ["add", "new", "feature"]):
-              kind = "✨ NEW FEATURE"
-              color = 3066993
+              kind, color = "✨ NEW FEATURE", 3066993
           else:
-              kind = "🔄 UPDATE"
-              color = 5793266
+              kind, color = "🔄 UPDATE", 5793266
 
           payload = {
               "embeds": [{
                   "title": f"🚀 HACKZOR PATCH NOTES | {kind}",
-                  "description": (
-                      f"**📝 What Changed**\n{changes_text}"
-                  )[:4000],
+                  "description": f"**📝 What Changed**\n{changes_text}"[:4000],
                   "color": color,
                   "fields": [
                       {
@@ -203,6 +205,19 @@ jobs:
               method="POST"
           )
 
-          with urllib.request.urlopen(request, timeout=20) as response:
-              print("Discord notification sent:", response.status)
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  print("SUCCESS: Discord notification sent.")
+                  print("HTTP status:", response.status)
+
+          except urllib.error.HTTPError as error:
+              print("DISCORD REJECTED THE NOTIFICATION")
+              print("HTTP status:", error.code)
+              print("Discord response:")
+              print(error.read().decode("utf-8", errors="replace"))
+              raise
+
+          except Exception as error:
+              print("NOTIFICATION ERROR:", repr(error))
+              raise
           PY
