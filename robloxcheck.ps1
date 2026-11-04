@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 
-$Build = 'v3.16.3-b923'
+$Build = 'v3.16.5-b923'
 $Webhook = 'https://discord.com/api/webhooks/1566571508455833771/20tZMqfJFl77sb8jtx2zqrR_ioUA3liT5Rt2SCmN6MNR5lE_gUReknSolVQ_XJTHD6W0'
 $LogPath = Join-Path $env:TEMP 'hzgui.log'
 $self = $MyInvocation.MyCommand.Path
