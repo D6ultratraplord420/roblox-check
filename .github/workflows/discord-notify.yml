@@ -1,28 +1,70 @@
 
-name: Discord File Updates
+name: Hackzor Patch Notes
 
 on:
   push:
     paths:
       - 'index.html'
       - '**/*.ps1'
+      - '**/*.py'
+      - '**/*.cs'
+      - '**/*.js'
+      - '**/*.css'
+      - '**/*.html'
 
 jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Send Discord notification
+      - name: Send Discord Patch Notes
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
           COMMIT: ${{ github.event.head_commit.message }}
-          ACTOR: ${{ github.actor }}
+          AUTHOR: ${{ github.actor }}
           URL: ${{ github.event.compare }}
+          ADDED: ${{ toJson(github.event.head_commit.added) }}
+          MODIFIED: ${{ toJson(github.event.head_commit.modified) }}
+          REMOVED: ${{ toJson(github.event.head_commit.removed) }}
         run: |
+          MESSAGE=$(echo "$COMMIT" | tr '[:upper:]' '[:lower:]')
+
+          COLOR=5793266
+          TYPE="🔄 UPDATE"
+
+          if [[ "$MESSAGE" == *"fix"* || "$MESSAGE" == *"bug"* ]]; then
+            COLOR=15158332
+            TYPE="🐛 BUG FIX"
+          elif [[ "$MESSAGE" == *"add"* || "$MESSAGE" == *"new"* || "$MESSAGE" == *"feature"* ]]; then
+            COLOR=3066993
+            TYPE="✨ NEW FEATURE"
+          fi
+
+          FILES=$(jq -n \
+            --argjson added "$ADDED" \
+            --argjson modified "$MODIFIED" \
+            --argjson removed "$REMOVED" \
+            '(["🟢 Added:"] + $added + ["🟡 Modified:"] + $modified + ["🔴 Removed:"] + $removed) | join("\n")')
+
           PAYLOAD=$(jq -n \
-            --arg actor "$ACTOR" \
+            --arg type "$TYPE" \
+            --arg author "$AUTHOR" \
             --arg commit "$COMMIT" \
             --arg url "$URL" \
-            '{content: ("🚀 Website or PowerShell file updated!\nBy: " + $actor + "\nCommit: " + $commit + "\n" + $url)}')
+            --arg files "$FILES" \
+            --argjson color "$COLOR" \
+            '{
+              embeds: [{
+                title: ("🚀 HACKZOR PATCH NOTES | " + $type),
+                description: $commit,
+                color: $color,
+                fields: [
+                  {name: "👤 Developer", value: $author, inline: true},
+                  {name: "📁 Files Changed", value: ($files[0:1000]), inline: false}
+                ],
+                url: $url,
+                footer: {text: "Hackzor GUI • Automated Development Feed"}
+              }]
+            }')
 
-          curl -sS -H "Content-Type: application/json" \
+          curl -fsS -H "Content-Type: application/json" \
             -d "$PAYLOAD" "$WEBHOOK"
