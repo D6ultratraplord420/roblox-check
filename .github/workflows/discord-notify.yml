@@ -32,7 +32,8 @@ jobs:
 
       - name: Generate and send patch notes
         env:
-          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RELAY_URL: ${{ secrets.PATCH_RELAY_URL }}
+          RELAY_TOKEN: ${{ secrets.PATCH_RELAY_TOKEN }}
           AUTHOR: ${{ github.actor }}
           COMMIT: ${{ github.event.head_commit.message }}
           COMPARE_URL: ${{ github.event.compare }}
@@ -46,16 +47,20 @@ jobs:
           import urllib.request
           import urllib.error
 
-          webhook = os.environ.get("WEBHOOK", "").strip()
+          relay_url = os.environ.get("RELAY_URL", "").strip()
+          relay_token = os.environ.get("RELAY_TOKEN", "").strip()
           author = os.environ.get("AUTHOR", "Unknown")
           commit = os.environ.get("COMMIT", "Code update")
           compare = os.environ.get("COMPARE_URL", "")
 
-          if not webhook:
-              raise RuntimeError("DISCORD_WEBHOOK_URL secret is missing.")
+          if not relay_url:
+              raise RuntimeError("PATCH_RELAY_URL secret is missing.")
 
-          if not webhook.startswith("https://discord.com/api/webhooks/") and not webhook.startswith("https://discordapp.com/api/webhooks/"):
-              raise RuntimeError("Webhook secret does not look like a valid Discord webhook URL.")
+          if not relay_token:
+              raise RuntimeError("PATCH_RELAY_TOKEN secret is missing.")
+
+          if not relay_url.startswith("https://"):
+              raise RuntimeError("Relay URL must start with https://")
 
           def git(*args):
               return subprocess.check_output(
@@ -64,15 +69,20 @@ jobs:
                   stderr=subprocess.DEVNULL
               )
 
-          # Find changed files
+          # Find changed files.
           raw_files = git(
-              "diff-tree", "--no-commit-id",
-              "--name-status", "-r", "HEAD"
+              "diff-tree",
+              "--no-commit-id",
+              "--name-status",
+              "-r",
+              "HEAD"
           ).splitlines()
 
           files = []
+
           for item in raw_files:
               parts = item.split("\t")
+
               if len(parts) < 2:
                   continue
 
@@ -86,12 +96,17 @@ jobs:
                   "R": "🔵 Renamed"
               }
 
-              files.append(f"{labels.get(status, '📄 Changed')}: `{filename}`")
+              files.append(
+                  f"{labels.get(status, '📄 Changed')}: `{filename}`"
+              )
 
-          # Retrieve actual code changes
+          # Retrieve actual code changes.
           diff = git(
-              "show", "--format=", "--no-ext-diff",
-              "--unified=0", "HEAD"
+              "show",
+              "--format=",
+              "--no-ext-diff",
+              "--unified=0",
+              "HEAD"
           )
 
           additions = []
@@ -109,27 +124,35 @@ jobs:
 
               if line.startswith("+"):
                   value = line[1:].strip()
+
                   if value and not sensitive.search(value):
                       additions.append(value)
 
               elif line.startswith("-"):
                   value = line[1:].strip()
+
                   if value and not sensitive.search(value):
                       removals.append(value)
 
           def summarize(line):
               if re.search(r"\bfunction\s+\w+", line, re.I):
                   return "Added or updated a function"
+
               if re.search(r"\b(if|elseif|else)\b", line, re.I):
                   return "Updated conditional logic"
+
               if re.search(r"\b(try|catch|finally)\b", line, re.I):
                   return "Updated error handling"
+
               if re.search(r"\b(import|using|require)\b", line, re.I):
                   return "Updated imports or dependencies"
+
               if re.search(r"\b(version|build)\w*\s*=", line, re.I):
                   return f"Updated version/build setting: `{line[:100]}`"
+
               if "=" in line:
                   return f"Updated setting: `{line[:100]}`"
+
               return f"Changed code: `{line[:100]}`"
 
           changes = []
@@ -137,12 +160,14 @@ jobs:
 
           for line in additions:
               item = "➕ " + summarize(line)
+
               if item not in seen:
                   changes.append(item)
                   seen.add(item)
 
           for line in removals:
               item = "➖ Removed: " + summarize(line)
+
               if item not in seen:
                   changes.append(item)
                   seen.add(item)
@@ -158,19 +183,25 @@ jobs:
           files_text = "\n".join(files[:15]) or "No file details available."
           changes_text = "\n".join(changes)
 
+          # Determine patch category.
           message = commit.lower()
 
           if any(word in message for word in ["fix", "bug"]):
               kind, color = "🐛 BUG FIX", 15158332
+
           elif any(word in message for word in ["add", "new", "feature"]):
               kind, color = "✨ NEW FEATURE", 3066993
+
           else:
               kind, color = "🔄 UPDATE", 5793266
 
+          # Build Discord embed.
           payload = {
               "embeds": [{
                   "title": f"🚀 HACKZOR PATCH NOTES | {kind}",
-                  "description": f"**📝 What Changed**\n{changes_text}"[:4000],
+                  "description": (
+                      f"**📝 What Changed**\n{changes_text}"
+                  )[:4000],
                   "color": color,
                   "fields": [
                       {
@@ -198,22 +229,26 @@ jobs:
           if compare.startswith("https://github.com/"):
               payload["embeds"][0]["url"] = compare
 
+          # Send to Cloudflare Worker instead of Discord directly.
           request = urllib.request.Request(
-              webhook,
+              relay_url,
               data=json.dumps(payload).encode("utf-8"),
-              headers={"Content-Type": "application/json"},
+              headers={
+                  "Content-Type": "application/json",
+                  "Authorization": "Bearer " + relay_token
+              },
               method="POST"
           )
 
           try:
-              with urllib.request.urlopen(request, timeout=20) as response:
-                  print("SUCCESS: Discord notification sent.")
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  print("SUCCESS: Discord notification sent through Cloudflare.")
                   print("HTTP status:", response.status)
+                  print(response.read().decode("utf-8", errors="replace"))
 
           except urllib.error.HTTPError as error:
-              print("DISCORD REJECTED THE NOTIFICATION")
+              print("RELAY REJECTED THE NOTIFICATION")
               print("HTTP status:", error.code)
-              print("Discord response:")
               print(error.read().decode("utf-8", errors="replace"))
               raise
 
