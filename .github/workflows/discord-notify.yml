@@ -4,7 +4,12 @@ name: Hackzor Patch Notes
 on:
   push:
     paths:
-      - 'index.html'
+      - '*.ps1'
+      - '*.py'
+      - '*.cs'
+      - '*.js'
+      - '*.css'
+      - '*.html'
       - '**/*.ps1'
       - '**/*.py'
       - '**/*.cs'
@@ -20,94 +25,184 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout latest commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: Generate Discord Patch Notes
+      - name: Generate readable patch notes
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          COMMIT: ${{ github.event.head_commit.message }}
           AUTHOR: ${{ github.actor }}
-          URL: ${{ github.event.compare }}
-          ADDED: ${{ toJson(github.event.head_commit.added) }}
-          MODIFIED: ${{ toJson(github.event.head_commit.modified) }}
-          REMOVED: ${{ toJson(github.event.head_commit.removed) }}
-
+          COMMIT: ${{ github.event.head_commit.message }}
+          COMPARE_URL: ${{ github.event.compare }}
         run: |
-          set -e
+          python3 <<'PY'
+          import os
+          import re
+          import json
+          import subprocess
+          import urllib.request
 
-          MESSAGE=$(echo "$COMMIT" | tr '[:upper:]' '[:lower:]')
+          def git(*args):
+              return subprocess.check_output(
+                  ["git", *args], text=True, stderr=subprocess.DEVNULL
+              )
 
-          COLOR=5793266
-          TYPE="🔄 UPDATE"
+          webhook = os.environ["WEBHOOK"]
+          author = os.environ["AUTHOR"]
+          commit = os.environ.get("COMMIT", "Code update")
+          compare = os.environ.get("COMPARE_URL", "")
 
-          if [[ "$MESSAGE" == *"fix"* || "$MESSAGE" == *"bug"* ]]; then
-            COLOR=15158332
-            TYPE="🐛 BUG FIX"
-          elif [[ "$MESSAGE" == *"add"* || "$MESSAGE" == *"new"* || "$MESSAGE" == *"feature"* ]]; then
-            COLOR=3066993
-            TYPE="✨ NEW FEATURE"
-          fi
+          # Identify changed files
+          statuses = git(
+              "diff-tree", "--no-commit-id", "--name-status",
+              "-r", "HEAD"
+          ).splitlines()
 
-          # Build the changed-file list
-          FILES=$(jq -n \
-            --argjson added "$ADDED" \
-            --argjson modified "$MODIFIED" \
-            --argjson removed "$REMOVED" \
-            '[
-              ($added[]? | "🟢 Added: " + .),
-              ($modified[]? | "🟡 Modified: " + .),
-              ($removed[]? | "🔴 Removed: " + .)
-            ] | if length == 0 then "No file details available." else join("\n") end')
+          files = []
+          for item in statuses:
+              parts = item.split("\t")
+              if len(parts) >= 2:
+                  status, filename = parts[0], parts[-1]
+                  label = {
+                      "A": "🟢 Added",
+                      "M": "🟡 Modified",
+                      "D": "🔴 Removed",
+                      "R": "🔵 Renamed"
+                  }.get(status[0], "📄 Changed")
+                  files.append(f"{label}: `{filename}`")
 
-          # Retrieve the actual code changes from Git
-          DIFF=$(git show --format= --no-ext-diff --unified=3 HEAD -- \
-            '*.ps1' '*.py' '*.cs' '*.js' '*.css' '*.html' \
-            | head -c 3000 || true)
+          # Get actual code changes, excluding Git metadata
+          diff = git("show", "--format=", "--no-ext-diff", "--unified=0", "HEAD")
 
-          if [ -z "$DIFF" ]; then
-            DIFF="No textual code changes found."
-          else
-            DIFF="\`\`\`diff
-          $DIFF
-          \`\`\`"
-          fi
+          additions = []
+          removals = []
 
-          # Build the Discord embed
-          PAYLOAD=$(jq -n \
-            --arg type "$TYPE" \
-            --arg author "$AUTHOR" \
-            --arg commit "$COMMIT" \
-            --arg url "$URL" \
-            --arg files "$FILES" \
-            --arg diff "$DIFF" \
-            --argjson color "$COLOR" \
-            '{
-              embeds: [{
-                title: ("🚀 HACKZOR PATCH NOTES | " + $type),
-                description: ($commit + "\n\n**📝 ACTUAL CODE CHANGES**\n" + $diff),
-                color: $color,
-                fields: [
-                  {
-                    name: "👤 Developer",
-                    value: $author,
-                    inline: true
-                  },
-                  {
-                    name: "📁 Files Changed",
-                    value: ($files[0:1000]),
-                    inline: false
+          sensitive = re.compile(
+              r"(webhook|password|secret|token|api[_-]?key|"
+              r"authorization|private[_-]?key)",
+              re.I
+          )
+
+          for line in diff.splitlines():
+              if line.startswith("+++") or line.startswith("---"):
+                  continue
+
+              if line.startswith("+"):
+                  content = line[1:].strip()
+                  if content and not sensitive.search(content):
+                      additions.append(content)
+
+              elif line.startswith("-"):
+                  content = line[1:].strip()
+                  if content and not sensitive.search(content):
+                      removals.append(content)
+
+          def describe(line):
+              # Recognize version/build assignments
+              match = re.search(
+                  r"\$?([\w.]*build|[\w.]*version)\s*=\s*['\"]?([^'\" ]+)",
+                  line,
+                  re.I
+              )
+              if match:
+                  return f"Updated {match.group(1)} to `{match.group(2)}`"
+
+              # Make common code changes easier to read
+              if line.startswith("#"):
+                  return "Updated a script comment"
+              if re.search(r"\bfunction\s+\w+", line, re.I):
+                  return "Added or updated a function"
+              if re.search(r"\b(if|elseif|else)\b", line, re.I):
+                  return "Updated conditional logic"
+              if re.search(r"\b(try|catch|finally)\b", line, re.I):
+                  return "Updated error handling"
+              if re.search(r"\b(import|using|require)\b", line, re.I):
+                  return "Updated dependencies or imports"
+              if "=" in line:
+                  return f"Updated setting: `{line[:90]}`"
+
+              return f"Changed code: `{line[:90]}`"
+
+          changes = []
+          seen = set()
+
+          for line in additions:
+              description = "➕ " + describe(line)
+              if description not in seen:
+                  changes.append(description)
+                  seen.add(description)
+
+          for line in removals:
+              description = "➖ Removed: " + describe(line)
+              if description not in seen:
+                  changes.append(description)
+                  seen.add(description)
+
+          if not changes:
+              changes = ["No readable code changes detected."]
+
+          # Discord embed limits
+          changes_text = "\n".join(changes[:10])
+          if len(changes) > 10:
+              changes_text += f"\n…and {len(changes) - 10} more changes."
+
+          files_text = "\n".join(files[:15]) if files else "No file details available."
+          if len(files) > 15:
+              files_text += f"\n…and {len(files) - 15} more files."
+
+          message = commit.lower()
+          if any(word in message for word in ["fix", "bug"]):
+              kind = "🐛 BUG FIX"
+              color = 15158332
+          elif any(word in message for word in ["add", "new", "feature"]):
+              kind = "✨ NEW FEATURE"
+              color = 3066993
+          else:
+              kind = "🔄 UPDATE"
+              color = 5793266
+
+          payload = {
+              "embeds": [{
+                  "title": f"🚀 HACKZOR PATCH NOTES | {kind}",
+                  "description": (
+                      f"**📝 What Changed**\n{changes_text}"
+                  )[:4000],
+                  "color": color,
+                  "fields": [
+                      {
+                          "name": "👤 Developer",
+                          "value": author[:100],
+                          "inline": True
+                      },
+                      {
+                          "name": "📁 Files Changed",
+                          "value": files_text[:1000],
+                          "inline": False
+                      },
+                      {
+                          "name": "💬 Commit",
+                          "value": commit[:1000],
+                          "inline": False
+                      }
+                  ],
+                  "footer": {
+                      "text": "Hackzor GUI • Automated Development Feed"
                   }
-                ],
-                url: $url,
-                footer: {
-                  text: "Hackzor GUI • Automated Development Feed"
-                }
               }]
-            }')
+          }
 
-          # Send notification to Discord
-          curl -fsS -H "Content-Type: application/json" \
-            -d "$PAYLOAD" "$WEBHOOK"
+          if compare.startswith("https://github.com/"):
+              payload["embeds"][0]["url"] = compare
+
+          request = urllib.request.Request(
+              webhook,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST"
+          )
+
+          with urllib.request.urlopen(request, timeout=20) as response:
+              print("Discord notification sent:", response.status)
+          PY
