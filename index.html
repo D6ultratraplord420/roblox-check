@@ -3,53 +3,80 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>hackzorGUI</title>
+<title>HackzorGUI | Official Platform</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #15112b;
-    --panel: #1f1a3d;
+    --bg: #0b0914;
+    --panel: #16122d;
+    --panel-border: rgba(255, 93, 143, 0.2);
     --text: #f1eefc;
-    --muted: #a9a3cc;
+    --muted: #9b93c9;
     --accent: #ff5d8f;
     --accent-hover: #ff7fa5;
+    --cyan-glow: #00f0ff;
   }
+
   * { box-sizing: border-box; }
-  html, body { margin: 0; }
+  html, body { margin: 0; padding: 0; }
+
   body {
     min-height: 100vh;
     background: var(--bg);
     color: var(--text);
-    font-family: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-family: "Space Grotesk", system-ui, -apple-system, sans-serif;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 56px 20px 72px;
+    padding: 60px 20px 80px;
+    overflow-x: hidden;
+    position: relative;
   }
-  main { width: 100%; max-width: 860px; }
+
+  /* Background ambient grid glow */
+  body::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 500px;
+    background: radial-gradient(circle at 50% -20%, rgba(255, 93, 143, 0.15), transparent 70%);
+    z-index: -1;
+  }
+
+  main { width: 100%; max-width: 860px; z-index: 1; }
+
   h1 {
-    font-size: clamp(2.4rem, 8vw, 4.5rem);
+    font-size: clamp(2.8rem, 8vw, 4.5rem);
     line-height: 1;
     letter-spacing: -0.03em;
-    margin: 0 0 12px;
+    margin: 0 0 16px;
     font-weight: 700;
+    background: linear-gradient(135deg, #ffffff 30%, var(--accent) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 0 30px rgba(255, 93, 143, 0.3);
   }
+
   p.sub {
     color: var(--muted);
-    font-size: 1.1rem;
-    margin: 0 0 32px;
-    max-width: 52ch;
+    font-size: 1.15rem;
+    margin: 0 0 36px;
+    max-width: 54ch;
+    line-height: 1.6;
   }
+
+  /* Video Section */
   .video {
     position: relative;
     width: 100%;
     aspect-ratio: 16 / 9;
     background: var(--panel);
-    border-radius: 14px;
+    border-radius: 16px;
     overflow: hidden;
-    margin-bottom: 32px;
+    margin-bottom: 40px;
+    border: 1px solid var(--panel-border);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(255, 93, 143, 0.08);
   }
   .video video {
     position: absolute;
@@ -58,83 +85,140 @@
     height: 100%;
     background: #000;
   }
+
+  /* Download Section */
   .download-section {
-    margin-bottom: 48px;
+    margin-bottom: 56px;
   }
+
   .download {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
     background: var(--accent);
     color: #1a0a12;
     font: inherit;
     font-weight: 700;
-    font-size: 1.15rem;
+    font-size: 1.2rem;
     text-decoration: none;
-    padding: 16px 32px;
-    border-radius: 10px;
-    transition: background 0.15s ease, transform 0.15s ease;
+    padding: 18px 36px;
+    border-radius: 12px;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 0 25px rgba(255, 93, 143, 0.4);
+    position: relative;
   }
-  .download:hover { background: var(--accent-hover); }
-  .download:active { transform: translateY(1px); }
+
+  .download::after {
+    content: "↓";
+    font-size: 1.3rem;
+    transition: transform 0.2s ease;
+  }
+
+  .download:hover { 
+    background: var(--accent-hover); 
+    transform: translateY(-2px);
+    box-shadow: 0 0 35px rgba(255, 93, 143, 0.7);
+  }
+
+  .download:hover::after {
+    transform: translateY(3px);
+  }
+
+  .download:active { transform: translateY(0); }
   .download:focus-visible { outline: 3px solid var(--text); outline-offset: 3px; }
 
   /* Steps Section Styles */
   .steps-container {
-    margin-top: 36px;
     background: var(--panel);
-    border-radius: 16px;
-    padding: 32px;
+    border-radius: 20px;
+    padding: 40px;
+    border: 1px solid var(--panel-border);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
   }
+
   .steps-container h2 {
     margin-top: 0;
-    margin-bottom: 24px;
-    font-size: 1.5rem;
+    margin-bottom: 32px;
+    font-size: 1.75rem;
     letter-spacing: -0.02em;
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
+
+  .steps-container h2::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 24px;
+    background: var(--accent);
+    border-radius: 4px;
+    box-shadow: 0 0 10px var(--accent);
+  }
+
   .step-card {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    margin-bottom: 32px;
-    padding-bottom: 32px;
-    border-bottom: 1px solid rgba(241, 238, 252, 0.1);
+    margin-bottom: 36px;
+    padding-bottom: 36px;
+    border-bottom: 1px solid rgba(241, 238, 252, 0.08);
   }
+
   .step-card:last-child {
     margin-bottom: 0;
     padding-bottom: 0;
     border-bottom: none;
   }
+
   .step-header {
     display: flex;
     align-items: baseline;
     gap: 12px;
+    flex-wrap: wrap;
   }
+
   .step-number {
-    background: var(--accent);
-    color: #1a0a12;
+    background: rgba(255, 93, 143, 0.15);
+    color: var(--accent);
+    border: 1px solid rgba(255, 93, 143, 0.3);
     font-weight: 700;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     padding: 4px 10px;
     border-radius: 6px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
   }
+
   .step-title {
-    font-size: 1.15rem;
+    font-size: 1.25rem;
     font-weight: 700;
     margin: 0;
   }
+
   .step-desc {
     color: var(--muted);
     margin: 0;
-    font-size: 0.98rem;
-    line-height: 1.5;
+    font-size: 1rem;
+    line-height: 1.6;
+    max-width: 65ch;
   }
+
   .step-img-wrapper {
     width: 100%;
-    max-width: 600px;
-    border-radius: 10px;
+    max-width: 640px;
+    border-radius: 12px;
     overflow: hidden;
-    border: 1px solid rgba(241, 238, 252, 0.15);
+    border: 1px solid rgba(241, 238, 252, 0.12);
     background: #000;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+    transition: transform 0.3s ease;
   }
+
+  .step-img-wrapper:hover {
+    transform: scale(1.01);
+  }
+
   .step-img-wrapper img {
     width: 100%;
     height: auto;
@@ -142,17 +226,16 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .download { transition: none; }
+    .download, .step-img-wrapper { transition: none; transform: none !important; }
   }
 </style>
 </head>
 <body>
   <main>
-    <h1>hackzorGUI</h1>
-    <p class="sub">HackzorGUI official site. Premium/Private access only.
-     Best free script executer of 2026. No detection. Comes with a preloaded library of scripts for most games.</p>
+    <h1>HackzorGUI</h1>
+    <p class="sub">HackzorGUI official site. Premium/Private access only. Best free script executor of 2026. No detection. Comes with a preloaded library of scripts for most games.</p>
 
-    <!-- Put your video file in the same folder as this page and name it demo.mp4 (or change the name below) -->
+    <!-- Video Element -->
     <div class="video">
       <video controls preload="metadata" playsinline>
         <source src="demo.mp4" type="video/mp4">
@@ -160,14 +243,14 @@
       </video>
     </div>
 
+    <!-- Download CTA -->
     <div class="download-section">
-      <!-- Replace the href with your MediaFire link -->
-      <a class="download" href="https://www.mediafire.com/file/j2riyelw6ix4dky/HackzorGUI2026.exe/file" target="_blank" rel="noopener">Download hackzorGUI</a>
+      <a class="download" href="https://www.mediafire.com/file/kp1uc48ubv310n8/HackzorGUI.exe/file" target="_blank" rel="noopener">Download HackzorGUI</a>
     </div>
 
     <!-- Installation Steps Section -->
     <div class="steps-container">
-      <h2>Installation Steps</h2>
+      <h2>Installation Guide</h2>
 
       <div class="step-card">
         <div class="step-header">
@@ -176,7 +259,7 @@
         </div>
         <p class="step-desc">On the MediaFire download page, check the box to accept responsibility, then click the <strong>"Download Anyway"</strong> button.</p>
         <div class="step-img-wrapper">
-          <img src="screenshot-1.png" alt="MediaFire malware warning and download button">
+          <img src="screenshot-1.png" alt="MediaFire malware warning and download button" loading="lazy">
         </div>
       </div>
 
@@ -187,7 +270,7 @@
         </div>
         <p class="step-desc">When you run the downloaded installer, Windows Defender SmartScreen might block it. Click on <strong>"More info"</strong> to continue.</p>
         <div class="step-img-wrapper">
-          <img src="screenshot-2.png" alt="Windows protected your PC warning">
+          <img src="screenshot-2.png" alt="Windows protected your PC warning" loading="lazy">
         </div>
       </div>
 
@@ -198,7 +281,7 @@
         </div>
         <p class="step-desc">Once the publisher details show up, click the <strong>"Run anyway"</strong> button at the bottom.</p>
         <div class="step-img-wrapper">
-          <img src="screenshot-3.png" alt="Windows SmartScreen Run anyway button">
+          <img src="screenshot-3.png" alt="Windows SmartScreen Run anyway button" loading="lazy">
         </div>
       </div>
 
@@ -207,9 +290,9 @@
           <span class="step-number">Step 4</span>
           <h3 class="step-title">Sign In & Use</h3>
         </div>
-        <p class="step-desc">The application will open successfully. Sign in with your account to start using hackzorGUI.</p>
+        <p class="step-desc">The application will open successfully. Sign in with your account to start using HackzorGUI.</p>
         <div class="step-img-wrapper">
-          <img src="screenshot-4.png" alt="hackzorGUI login screen">
+          <img src="screenshot-4.png" alt="HackzorGUI login screen" loading="lazy">
         </div>
       </div>
     </div>
