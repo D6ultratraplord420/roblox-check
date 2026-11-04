@@ -1,0 +1,28 @@
+
+name: Discord File Updates
+
+on:
+  push:
+    paths:
+      - 'index.html'
+      - '**/*.ps1'
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Discord notification
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          COMMIT: ${{ github.event.head_commit.message }}
+          ACTOR: ${{ github.actor }}
+          URL: ${{ github.event.compare }}
+        run: |
+          PAYLOAD=$(jq -n \
+            --arg actor "$ACTOR" \
+            --arg commit "$COMMIT" \
+            --arg url "$URL" \
+            '{content: ("🚀 Website or PowerShell file updated!\nBy: " + $actor + "\nCommit: " + $commit + "\n" + $url)}')
+
+          curl -sS -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "$WEBHOOK"
