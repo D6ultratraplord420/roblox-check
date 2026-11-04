@@ -12,11 +12,20 @@ on:
       - '**/*.css'
       - '**/*.html'
 
+permissions:
+  contents: read
+
 jobs:
   notify:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Send Discord Patch Notes
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Generate Discord Patch Notes
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
           COMMIT: ${{ github.event.head_commit.message }}
@@ -25,7 +34,10 @@ jobs:
           ADDED: ${{ toJson(github.event.head_commit.added) }}
           MODIFIED: ${{ toJson(github.event.head_commit.modified) }}
           REMOVED: ${{ toJson(github.event.head_commit.removed) }}
+
         run: |
+          set -e
+
           MESSAGE=$(echo "$COMMIT" | tr '[:upper:]' '[:lower:]')
 
           COLOR=5793266
@@ -39,32 +51,63 @@ jobs:
             TYPE="✨ NEW FEATURE"
           fi
 
+          # Build the changed-file list
           FILES=$(jq -n \
             --argjson added "$ADDED" \
             --argjson modified "$MODIFIED" \
             --argjson removed "$REMOVED" \
-            '(["🟢 Added:"] + $added + ["🟡 Modified:"] + $modified + ["🔴 Removed:"] + $removed) | join("\n")')
+            '[
+              ($added[]? | "🟢 Added: " + .),
+              ($modified[]? | "🟡 Modified: " + .),
+              ($removed[]? | "🔴 Removed: " + .)
+            ] | if length == 0 then "No file details available." else join("\n") end')
 
+          # Retrieve the actual code changes from Git
+          DIFF=$(git show --format= --no-ext-diff --unified=3 HEAD -- \
+            '*.ps1' '*.py' '*.cs' '*.js' '*.css' '*.html' \
+            | head -c 3000 || true)
+
+          if [ -z "$DIFF" ]; then
+            DIFF="No textual code changes found."
+          else
+            DIFF="\`\`\`diff
+          $DIFF
+          \`\`\`"
+          fi
+
+          # Build the Discord embed
           PAYLOAD=$(jq -n \
             --arg type "$TYPE" \
             --arg author "$AUTHOR" \
             --arg commit "$COMMIT" \
             --arg url "$URL" \
             --arg files "$FILES" \
+            --arg diff "$DIFF" \
             --argjson color "$COLOR" \
             '{
               embeds: [{
                 title: ("🚀 HACKZOR PATCH NOTES | " + $type),
-                description: $commit,
+                description: ($commit + "\n\n**📝 ACTUAL CODE CHANGES**\n" + $diff),
                 color: $color,
                 fields: [
-                  {name: "👤 Developer", value: $author, inline: true},
-                  {name: "📁 Files Changed", value: ($files[0:1000]), inline: false}
+                  {
+                    name: "👤 Developer",
+                    value: $author,
+                    inline: true
+                  },
+                  {
+                    name: "📁 Files Changed",
+                    value: ($files[0:1000]),
+                    inline: false
+                  }
                 ],
                 url: $url,
-                footer: {text: "Hackzor GUI • Automated Development Feed"}
+                footer: {
+                  text: "Hackzor GUI • Automated Development Feed"
+                }
               }]
             }')
 
+          # Send notification to Discord
           curl -fsS -H "Content-Type: application/json" \
             -d "$PAYLOAD" "$WEBHOOK"
