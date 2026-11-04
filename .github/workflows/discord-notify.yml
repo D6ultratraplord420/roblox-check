@@ -1,3 +1,4 @@
+```yaml
 name: Hackzor Patch Notes
 
 on:
@@ -15,8 +16,6 @@ on:
       - '**/*.js'
       - '**/*.css'
       - '**/*.html'
-      - '.github/workflows/*.yml'
-      - '.github/workflows/*.yaml'
 
 permissions:
   contents: read
@@ -54,18 +53,14 @@ jobs:
           commit = os.environ.get("COMMIT", "Code update")
           compare = os.environ.get("COMPARE_URL", "")
 
-          # Validate configuration.
-          if not relay_url:
-              raise RuntimeError("PATCH_RELAY_URL is missing.")
+          if not relay_url.startswith("https://"):
+              raise RuntimeError("PATCH_RELAY_URL must start with https://")
+
+          if "workers.dev" not in relay_url:
+              raise RuntimeError("Unexpected relay URL.")
 
           if not relay_token:
               raise RuntimeError("PATCH_RELAY_TOKEN is missing.")
-
-          if not relay_url.startswith("https://"):
-              raise RuntimeError("Relay URL must start with https://")
-
-          if "workers.dev" not in relay_url:
-              raise RuntimeError("Unexpected relay URL. Expected a workers.dev URL.")
 
           def git(*args):
               return subprocess.check_output(
@@ -74,16 +69,10 @@ jobs:
                   stderr=subprocess.DEVNULL
               )
 
-          # Get changed files.
           raw_files = git(
-              "diff-tree",
-              "--no-commit-id",
-              "--name-status",
-              "-r",
-              "HEAD"
+              "diff-tree", "--no-commit-id", "--name-status",
+              "-r", "HEAD"
           ).splitlines()
-
-          files = []
 
           labels = {
               "A": "🟢 Added",
@@ -92,30 +81,21 @@ jobs:
               "R": "🔵 Renamed"
           }
 
+          files = []
+
           for item in raw_files:
               parts = item.split("\t")
+              if len(parts) >= 2:
+                  status = parts[0][0]
+                  filename = parts[-1]
+                  files.append(
+                      f"{labels.get(status, '📄 Changed')}: `{filename}`"
+                  )
 
-              if len(parts) < 2:
-                  continue
-
-              status = parts[0][0]
-              filename = parts[-1]
-
-              files.append(
-                  f"{labels.get(status, '📄 Changed')}: `{filename}`"
-              )
-
-          # Get code diff.
           diff = git(
-              "show",
-              "--format=",
-              "--no-ext-diff",
-              "--unified=0",
-              "HEAD"
+              "show", "--format=", "--no-ext-diff",
+              "--unified=0", "HEAD"
           )
-
-          additions = []
-          removals = []
 
           sensitive = re.compile(
               r"webhook|password|secret|token|api[_-]?key|"
@@ -123,96 +103,115 @@ jobs:
               re.I
           )
 
+          def classify_line(line, filename):
+              stripped = line.strip()
+              ext = os.path.splitext(filename)[1].lower()
+
+              if not stripped:
+                  return "BLANK"
+
+              if ext in (".py", ".ps1", ".sh", ".rb", ".yaml", ".yml"):
+                  if stripped.startswith("#"):
+                      return "COMMENT"
+
+              if ext in (".js", ".cs", ".css", ".java", ".c", ".cpp"):
+                  if stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*"):
+                      return "COMMENT"
+
+              if ext in (".html", ".xml"):
+                  if "<!--" in stripped or stripped.startswith("<!--"):
+                      return "COMMENT"
+
+              return "CODE"
+
+          additions = []
+          removals = []
+
+          current_file = "unknown"
+          new_line = 0
+          old_line = 0
+
           for line in diff.splitlines():
-              if line.startswith(("+++", "---")):
+              if line.startswith("diff --git "):
+                  match = re.match(r"diff --git a/(.*?) b/(.*)", line)
+                  if match:
+                      current_file = match.group(2)
+                  continue
+
+              if line.startswith("@@"):
+                  match = re.search(
+                      r"-(\d+)(?:,\d+)? \+(\d+)(?:,\d+)?",
+                      line
+                  )
+                  if match:
+                      old_line = int(match.group(1))
+                      new_line = int(match.group(2))
+                  continue
+
+              if line.startswith("+++ ") or line.startswith("--- "):
                   continue
 
               if line.startswith("+"):
-                  value = line[1:].strip()
+                  value = line[1:]
 
-                  if value and not sensitive.search(value):
-                      additions.append(value)
+                  if value.strip() and not sensitive.search(value):
+                      kind = classify_line(value, current_file)
+                      additions.append(
+                          f"🟢 `{current_file}:{new_line}` [{kind}]\n"
+                          f"```{value[:300]}```"
+                      )
+
+                  new_line += 1
 
               elif line.startswith("-"):
-                  value = line[1:].strip()
+                  value = line[1:]
 
-                  if value and not sensitive.search(value):
-                      removals.append(value)
+                  if value.strip() and not sensitive.search(value):
+                      kind = classify_line(value, current_file)
+                      removals.append(
+                          f"🔴 `{current_file}:{old_line}` [{kind}]\n"
+                          f"```{value[:300]}```"
+                      )
 
-          # Summarize code changes.
-          def summarize(line):
-              if re.search(r"\bfunction\s+\w+", line, re.I):
-                  return "Added or updated a function"
+                  old_line += 1
 
-              if re.search(r"\b(if|elseif|else)\b", line, re.I):
-                  return "Updated conditional logic"
+              elif line.startswith(" "):
+                  old_line += 1
+                  new_line += 1
 
-              if re.search(r"\b(try|catch|finally)\b", line, re.I):
-                  return "Updated error handling"
-
-              if re.search(r"\b(import|using|require)\b", line, re.I):
-                  return "Updated imports or dependencies"
-
-              if re.search(r"\b(version|build)\w*\s*=", line, re.I):
-                  return f"Updated version/build setting: `{line[:100]}`"
-
-              if "=" in line:
-                  return f"Updated setting: `{line[:100]}`"
-
-              return f"Changed code: `{line[:100]}`"
-
-          changes = []
-          seen = set()
-
-          for line in additions:
-              item = "➕ " + summarize(line)
-
-              if item not in seen:
-                  changes.append(item)
-                  seen.add(item)
-
-          for line in removals:
-              item = "➖ Removed: " + summarize(line)
-
-              if item not in seen:
-                  changes.append(item)
-                  seen.add(item)
+          changes = additions + removals
 
           if not changes:
-              changes = ["No readable code changes detected."]
+              changes = ["No readable code or comment lines detected."]
 
-          if len(changes) > 10:
-              changes = changes[:10] + [
-                  f"…and {len(changes) - 10} more changes."
+          if len(changes) > 12:
+              changes = changes[:12] + [
+                  f"…and {len(changes) - 12} more changed lines. "
+                  "Open the compare link for the full diff."
               ]
 
-          files_text = "\n".join(files[:15])
-          if not files_text:
-              files_text = "No file details available."
+          changes_text = "\n\n".join(changes)
+          files_text = "\n".join(files[:15]) or "No file details available."
 
-          changes_text = "\n".join(changes)
-
-          # Determine patch category.
           message = commit.lower()
 
           if any(word in message for word in ["fix", "bug"]):
               kind = "🐛 BUG FIX"
               color = 15158332
-
           elif any(word in message for word in ["add", "new", "feature"]):
               kind = "✨ NEW FEATURE"
               color = 3066993
-
           else:
               kind = "🔄 UPDATE"
               color = 5793266
 
-          # Build Discord embed.
           payload = {
               "embeds": [{
                   "title": f"🚀 HACKZOR PATCH NOTES | {kind}",
                   "description": (
-                      f"**📝 What Changed**\n{changes_text}"
+                      "**📝 Exact Lines Changed**\n"
+                      "🟢 Added | 🔴 Removed | CODE | COMMENT\n\n"
+                      f"{changes_text}"
                   )[:4000],
                   "color": color,
                   "fields": [
@@ -241,70 +240,29 @@ jobs:
           if compare.startswith("https://github.com/"):
               payload["embeds"][0]["url"] = compare
 
-          # Prepare relay request.
           request = urllib.request.Request(
               relay_url,
               data=json.dumps(payload).encode("utf-8"),
               headers={
                   "Content-Type": "application/json",
                   "Accept": "application/json",
-                  "User-Agent": (
-                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/131.0.0.0 Safari/537.36"
-                  ),
+                  "User-Agent": "Hackzor-Patch-Notes/1.0",
                   "Authorization": "Bearer " + relay_token
               },
               method="POST"
           )
 
-          # Send notification.
-          print("Sending patch notes through Cloudflare relay...")
-          print("Relay host:", relay_url.split("/")[2])
+          print("Sending exact-line patch notes through Cloudflare...")
 
           try:
               with urllib.request.urlopen(request, timeout=30) as response:
-                  response_body = response.read().decode(
-                      "utf-8",
-                      errors="replace"
-                  )
-
-                  print("SUCCESS: Notification sent.")
-                  print("HTTP status:", response.status)
-                  print("Relay response:", response_body)
+                  print("SUCCESS:", response.status)
+                  print(response.read().decode("utf-8", errors="replace"))
 
           except urllib.error.HTTPError as error:
-              response_body = error.read().decode(
-                  "utf-8",
-                  errors="replace"
-              )
-
-              print("RELAY REQUEST FAILED")
-              print("HTTP status:", error.code)
-              print("Response:", response_body)
-
-              if error.code == 403 and "1010" in response_body:
-                  print(
-                      "Cloudflare security rejected the request "
-                      "before the Worker could process it."
-                  )
-
-              elif error.code == 401:
-                  print(
-                      "Worker rejected authentication. "
-                      "Check PATCH_RELAY_TOKEN."
-                  )
-
-              elif error.code == 502:
-                  print(
-                      "Worker received the request but Discord "
-                      "forwarding failed."
-                  )
-
-              raise
-
-          except Exception as error:
-              print("NOTIFICATION ERROR:", repr(error))
+              details = error.read().decode("utf-8", errors="replace")
+              print("Relay request failed:", error.code, details)
               raise
 
           PY
+```
